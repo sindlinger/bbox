@@ -1,16 +1,16 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QLabel, QLineEdit, QPushButton, QProgressBar,
-    QFileDialog, QMessageBox, QScrollArea, QCheckBox
+    QFileDialog, QMessageBox, QScrollArea, QCheckBox, QComboBox
 )
 from PySide6.QtCore import Qt, Signal, QThread
 from PySide6.QtGui import QImage, QPixmap
 import cv2
 from pathlib import Path
 import time
-
+import json
 from roi_extractor import ROIExtractor
-from template_manager import TemplateManager
+from gui.template_manager import TemplateManager
 
 class ProcessingWorker(QThread):
     """Thread worker para processamento em background"""
@@ -30,6 +30,7 @@ class ProcessingWorker(QThread):
     def run(self):
         """Executa o processamento"""
         try:
+            input_path = Path(self.input_dir)
             input_path = Path(self.input_dir)
             output_path = Path(self.output_dir)
             

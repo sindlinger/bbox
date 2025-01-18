@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 import json
 import csv
 import re
-import tqdm
 
 def manage_templates():
     template_manager = TemplateManager()

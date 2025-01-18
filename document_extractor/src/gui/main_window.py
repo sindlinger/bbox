@@ -19,14 +19,11 @@ class MainWindow(QMainWindow):
         """Configura a interface principal"""
         self.setWindowTitle("Sistema de Extração de Documentos")
         self.setMinimumSize(1200, 800)
-        
-        # Barra de ferramentas
-        self.setup_toolbar()
-        
-        # Widget central com abas
+              # Widget central com abas
         self.tab_widget = QTabWidget()
         self.setCentralWidget(self.tab_widget)
         
+
         # Criar abas principais
         self.template_editor = TemplateEditor()
         self.document_processor = DocumentProcessor()
@@ -42,7 +39,10 @@ class MainWindow(QMainWindow):
             lambda: self.statusBar().showMessage("Template salvo com sucesso", 3000))
         self.document_processor.processing_status.connect(
             self.statusBar().showMessage)
-            
+        # Barra de ferramentas
+        
+        self.setup_toolbar()
+        
     def setup_toolbar(self):
         """Configura a barra de ferramentas"""
         toolbar = QToolBar()

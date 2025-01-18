@@ -1,15 +1,20 @@
 import cv2
 import numpy as np
+import json
+import os
+from datetime import datetime
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QLabel, QComboBox, QLineEdit, QPushButton,
-    QSpinBox, QListWidget, QScrollArea, QMessageBox
+    QSpinBox, QListWidget, QListWidgetItem, QScrollArea, QMessageBox, QInputDialog
 )
+
 from PySide6.QtCore import Qt, Signal, QPoint
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor
 
 from roi_extractor import ROIExtractor
-from template_manager import TemplateManager
+from gui.template_manager import TemplateManager
 
 class ImageViewer(QLabel):
     """Widget personalizado para visualizar e editar ROIs"""
@@ -153,6 +158,9 @@ class TemplateEditor(QWidget):
     
     def __init__(self):
         super().__init__()
+        self.template_modified = False
+
+        
         
         self.template_manager = TemplateManager()
         self.roi_extractor = ROIExtractor(self.template_manager)
@@ -204,6 +212,15 @@ class TemplateEditor(QWidget):
         group = QGroupBox("Template")
         layout = QVBoxLayout()
         
+        # Nome do template
+        name_layout = QHBoxLayout()  # <--- Declaração de name_layout
+        name_layout.addWidget(QLabel("Nome:"))
+        self.template_name = QLineEdit()
+        name_layout.addWidget(self.template_name)
+        
+        self.name_edit = QLineEdit()
+        name_layout.addWidget(self.name_edit)  # <--- Uso de name_layout
+        
         # Tipo de documento
         doc_layout = QHBoxLayout()
         doc_layout.addWidget(QLabel("Tipo:"))
@@ -211,14 +228,12 @@ class TemplateEditor(QWidget):
         self.doc_type.currentTextChanged.connect(self.update_templates)
         doc_layout.addWidget(self.doc_type)
         
-        # Nome do template
-        name_layout = QHBoxLayout()
-        name_layout.addWidget(QLabel("Nome:"))
-        self.template_name = QLineEdit()
-        name_layout.addWidget(self.template_name)
-        
         layout.addLayout(doc_layout)
         layout.addLayout(name_layout)
+        
+        # Adicione esta linha após criar o QComboBox doc_type
+        self.template_list = QListWidget()
+        self.template_list.currentItemChanged.connect(self.open_template)
         
         # Botões
         btn_layout = QHBoxLayout()
@@ -243,6 +258,7 @@ class TemplateEditor(QWidget):
         
         # Lista de ROIs
         self.roi_list = QListWidget()
+        
         self.roi_list.itemClicked.connect(
             lambda item: self.select_roi(item.text()))
         layout.addWidget(self.roi_list)
@@ -361,7 +377,356 @@ class TemplateEditor(QWidget):
         # Atualizar coordenadas
         region["coords"] = (int(new_x1), int(new_y1), int(new_x2), int(new_y2))
         self.update_roi_display()
+    
+    
+    def setup_side_panel(self):
+        """Configura o painel lateral"""
+        layout = QVBoxLayout()
+        
+        # Lista de campos
+        self.fields_list = QListWidget()
+        self.fields_list.currentItemChanged.connect(self.field_selected)
+        
+        # Controles de coordenadas
+        coords_layout = QVBoxLayout()
+        
+        # X
+        x_layout = QHBoxLayout()
+        x_layout.addWidget(QLabel("X:"))
+        self.x_spin = QSpinBox()
+        self.x_spin.setRange(0, 9999)
+        self.x_spin.valueChanged.connect(self.update_roi_from_inputs)
+        x_layout.addWidget(self.x_spin)
+        
+        # Y
+        y_layout = QHBoxLayout()
+        y_layout.addWidget(QLabel("Y:"))
+        self.y_spin = QSpinBox()
+        self.y_spin.setRange(0, 9999)
+        self.y_spin.valueChanged.connect(self.update_roi_from_inputs)
+        y_layout.addWidget(self.y_spin)
+        
+        # Width
+        width_layout = QHBoxLayout()
+        width_layout.addWidget(QLabel("Width:"))
+        self.width_spin = QSpinBox()
+        self.width_spin.setRange(1, 9999)
+        self.width_spin.valueChanged.connect(self.update_roi_from_inputs)
+        width_layout.addWidget(self.width_spin)
+        
+        # Height
+        height_layout = QHBoxLayout()
+        height_layout.addWidget(QLabel("Height:"))
+        self.height_spin = QSpinBox()
+        self.height_spin.setRange(1, 9999)
+        self.height_spin.valueChanged.connect(self.update_roi_from_inputs)
+        height_layout.addWidget(self.height_spin)
+        
+        coords_layout.addLayout(x_layout)
+        coords_layout.addLayout(y_layout)
+        coords_layout.addLayout(width_layout)
+        coords_layout.addLayout(height_layout)
+        
+        layout.addWidget(self.fields_list)
+        layout.addLayout(coords_layout)
+        
+        return layout
 
+    def init_state(self):
+        """Inicializa o estado do editor"""
+        self.selected_roi = None
+        self.template_modified = False
+        self.regions = {}
+        self.current_image = None
+        
+        # Popula o combo de tipos de documento
+        self.doc_type.addItems(["RG", "CPF", "CNH", "OUTROS"])  # Ajuste conforme necessário
+        
+        # Atualiza as listas
+        self.update_templates()
+  
+    def sync_roi_fields(self):
+        """Sincroniza a lista de campos com as ROIs"""
+        try:
+            # Limpa ambas as listas
+            self.fields_list.clear()
+            self.roi_list.clear()
+            
+            # Adiciona os campos/ROIs
+            for name, region in self.regions.items():
+                # Adiciona à lista de ROIs
+                self.roi_list.addItem(name)
+                
+                # Cria item para lista de campos
+                field_item = QListWidgetItem(name)
+                field_data = {
+                    'id': name,
+                    'name': name,
+                    'type': region['expected_type'],
+                    'bbox': {
+                        'x': region['coords'][0],
+                        'y': region['coords'][1],
+                        'width': region['coords'][2] - region['coords'][0],
+                        'height': region['coords'][3] - region['coords'][1]
+                    }
+                }
+                field_item.setData(Qt.UserRole, field_data)
+                self.fields_list.addItem(field_item)
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", 
+                            f"Erro ao sincronizar campos: {str(e)}")
+
+    def field_selected(self, current, previous):
+        """Manipula a seleção de um campo na lista"""
+        if current:
+            field_data = current.data(Qt.UserRole)
+            if field_data and 'bbox' in field_data:
+                self.update_coordinate_inputs(field_data['bbox'])
+
+    # Aqui vão todas as funções que implementamos anteriormente
+    
+        
+    def update_roi_from_inputs(self):
+        """Atualiza a ROI baseado nos valores dos campos de entrada"""
+        try:
+            current_item = self.fields_list.currentItem()
+            if not current_item:
+                return
+                
+            field_data = current_item.data(Qt.UserRole)
+            if not field_data:
+                return
+                
+            # Atualiza as coordenadas
+            field_data['bbox'] = {
+                'x': self.x_spin.value(),
+                'y': self.y_spin.value(),
+                'width': self.width_spin.value(),
+                'height': self.height_spin.value()
+            }
+            
+            # Atualiza o item na lista
+            current_item.setData(Qt.UserRole, field_data)
+            
+            # Atualiza o visualizador
+            self.image_viewer.update_roi(field_data['id'], field_data['bbox'])
+            
+            # Marca como modificado
+            self.template_modified = True
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", 
+                            f"Erro ao atualizar ROI: {str(e)}")
+                    
+                    
+    def update_coordinate_inputs(self, bbox):
+        """
+        Atualiza os campos de entrada de coordenadas com os valores da bbox
+        
+        Args:
+            bbox: Dicionário com as coordenadas {x, y, width, height}
+        """
+        try:
+            self.x_spin.setValue(bbox['x'])
+            self.y_spin.setValue(bbox['y'])
+            self.width_spin.setValue(bbox['width'])
+            self.height_spin.setValue(bbox['height'])
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", 
+                            f"Erro ao atualizar coordenadas: {str(e)}")
+            
+            
+    def update_templates(self):
+        
+        """Atualiza a lista de templates com base no tipo de documento selecionado"""
+        try:
+            # Limpa a lista atual de templates
+            self.template_list.clear()
+            
+            # Obtém o tipo de documento selecionado
+            doc_type = self.doc_type.currentText()
+            
+            # Define o diretório base dos templates
+            template_dir = os.path.join("templates", doc_type)
+            
+            # Verifica se o diretório existe
+            if not os.path.exists(template_dir):
+                os.makedirs(template_dir)
+                
+            # Lista todos os arquivos .json no diretório
+            template_files = [f for f in os.listdir(template_dir) 
+                            if f.endswith('.json')]
+            
+            # Adiciona os templates à lista
+            for template_file in template_files:
+                template_name = os.path.splitext(template_file)[0]
+                self.template_list.addItem(template_name)
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", 
+                            f"Erro ao atualizar templates: {str(e)}")
+
+
+    def update_coordinate_inputs(self, bbox):
+        """
+        Atualiza os campos de entrada de coordenadas com os valores da bbox
+        
+        Args:
+            bbox: Dicionário com as coordenadas {x, y, width, height}
+        """
+        try:
+            self.x_spin.setValue(bbox['x'])
+            self.y_spin.setValue(bbox['y'])
+            self.width_spin.setValue(bbox['width'])
+            self.height_spin.setValue(bbox['height'])
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", 
+                            f"Erro ao atualizar coordenadas: {str(e)}")
+
+    def move_roi(self, roi_id, new_position):
+        """Atualiza a posição de uma ROI quando ela é movida na interface"""
+        try:
+            current_item = self.fields_list.currentItem()
+            if not current_item:
+                return
+                
+            field_data = current_item.data(Qt.UserRole)
+            if not field_data:
+                return
+                
+            field_data['bbox']['x'] = new_position[0]
+            field_data['bbox']['y'] = new_position[1]
+            
+            current_item.setData(Qt.UserRole, field_data)
+            self.update_coordinate_inputs(field_data['bbox'])
+            self.template_modified = True
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", 
+                            f"Erro ao mover ROI: {str(e)}")
+        
+    def new_template(self):
+        """Cria um novo template"""
+        try:
+            # Solicita o nome do novo template
+            name, ok = QInputDialog.getText(self, 'Novo Template', 
+                                        'Nome do template:')
+            
+            if ok and name:
+                # Verifica se já existe um template com esse nome
+                doc_type = self.doc_type.currentText()
+                template_path = os.path.join("templates", doc_type, 
+                                        f"{name}.json")
+                
+                if os.path.exists(template_path):
+                    QMessageBox.warning(self, "Aviso", 
+                                    "Já existe um template com este nome!")
+                    return
+                
+                # Cria um novo template vazio
+                template_data = {
+                    "name": name,
+                    "doc_type": doc_type,
+                    "fields": [],
+                    "created_at": datetime.now().isoformat(),
+                    "modified_at": datetime.now().isoformat()
+                }
+                
+                # Salva o novo template
+                os.makedirs(os.path.dirname(template_path), exist_ok=True)
+                with open(template_path, 'w', encoding='utf-8') as f:
+                    json.dump(template_data, f, indent=4)
+                
+                # Atualiza a lista de templates
+                self.update_templates()
+                
+                # Seleciona o novo template
+                items = self.template_list.findItems(name, Qt.MatchExactly)
+                if items:
+                    self.template_list.setCurrentItem(items[0])
+                    
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", 
+                            f"Erro ao criar novo template: {str(e)}")
+
+    def open_template(self):
+        """Abre um template existente"""
+        try:
+            # Obtém o item selecionado
+            current_item = self.template_list.currentItem()
+            if not current_item:
+                return
+                
+            template_name = current_item.text()
+            doc_type = self.doc_type.currentText()
+            
+            # Carrega o arquivo do template
+            template_path = os.path.join("templates", doc_type, 
+                                    f"{template_name}.json")
+            
+            with open(template_path, 'r', encoding='utf-8') as f:
+                template_data = json.load(f)
+                
+            # Atualiza a interface com os dados do template
+            self.name_edit.setText(template_data["name"])
+            
+            # Limpa e preenche a lista de campos
+            self.fields_list.clear()
+            for field in template_data["fields"]:
+                item = QListWidgetItem()
+                item.setText(field["name"])
+                item.setData(Qt.UserRole, field)
+                self.fields_list.addItem(item)
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", 
+                            f"Erro ao abrir template: {str(e)}")
+
+    def save_template(self):
+        """Salva o template atual"""
+        try:
+            # Verifica se há um template selecionado
+            current_item = self.template_list.currentItem()
+            if not current_item:
+                QMessageBox.warning(self, "Aviso", 
+                                "Nenhum template selecionado!")
+                return
+                
+            template_name = current_item.text()
+            doc_type = self.doc_type.currentText()
+            
+            # Coleta os dados atuais do template
+            template_data = {
+                "name": self.name_edit.text(),
+                "doc_type": doc_type,
+                "fields": [],
+                "modified_at": datetime.now().isoformat()
+            }
+            
+            # Coleta todos os campos
+            for i in range(self.fields_list.count()):
+                item = self.fields_list.item(i)
+                field_data = item.data(Qt.UserRole)
+                template_data["fields"].append(field_data)
+                
+            # Salva o template
+            template_path = os.path.join("templates", doc_type, 
+                                    f"{template_name}.json")
+            
+            with open(template_path, 'w', encoding='utf-8') as f:
+                json.dump(template_data, f, indent=4)
+                
+            # Emite o sinal de template salvo
+            self.template_saved.emit()
+            
+            QMessageBox.information(self, "Sucesso", 
+                                "Template salvo com sucesso!")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", 
+                            f"Erro ao salvar template: {str(e)}")
+        
     def keyPressEvent(self, event):
         """Processa eventos de teclado"""
         if not self.selected_roi:
@@ -508,12 +873,12 @@ class TemplateEditor(QWidget):
             del self.regions[self.selected_roi]
             self.selected_roi = new_name
             self.update_roi_list()
+            
 
     def update_roi_list(self):
         """Atualiza a lista de ROIs"""
-        self.roi_list.clear()
-        for name in sorted(self.regions.keys()):
-            self.roi_list.addItem(name)
+        self.sync_roi_fields()
+        
 
     def update_roi_display(self):
         """Atualiza a exibição das ROIs"""
