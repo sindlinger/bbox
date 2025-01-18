@@ -159,14 +159,19 @@ class TemplateEditor(QWidget):
     def __init__(self):
         super().__init__()
         self.template_modified = False
+        self.selected_roi = None
+        self.regions = {}
+        self.current_image = None
 
-        
-        
+        # Inicializar gerenciadores
         self.template_manager = TemplateManager()
         self.roi_extractor = ROIExtractor(self.template_manager)
         
         self.current_image = None
         self.setup_ui()
+        
+        # Inicializar estado
+        self.init_state()
         
     def setup_ui(self):
         """Configura a interface do editor"""
@@ -201,9 +206,18 @@ class TemplateEditor(QWidget):
         scroll_area.setWidget(self.image_viewer)
         scroll_area.setWidgetResizable(True)
         
+        # Botão de confirmação da imagem
+        confirm_btn = QPushButton("Confirmar Imagem")
+        confirm_btn.clicked.connect(self.confirm_image)
+        
+        # Layout direito com scroll area e botão
+        right_layout = QVBoxLayout()
+        right_layout.addWidget(scroll_area)
+        right_layout.addWidget(confirm_btn)
+        
         # Adicionar painéis ao layout principal
         layout.addWidget(left_panel)
-        layout.addWidget(scroll_area, stretch=1)
+        layout.addLayout(right_layout, stretch=1)
         
         self.setLayout(layout)
         
@@ -213,25 +227,20 @@ class TemplateEditor(QWidget):
         layout = QVBoxLayout()
         
         # Nome do template
-        name_layout = QHBoxLayout()  # <--- Declaração de name_layout
+        name_layout = QHBoxLayout()
         name_layout.addWidget(QLabel("Nome:"))
-        self.template_name = QLineEdit()
-        name_layout.addWidget(self.template_name)
-        
         self.name_edit = QLineEdit()
-        name_layout.addWidget(self.name_edit)  # <--- Uso de name_layout
+        name_layout.addWidget(self.name_edit)
         
         # Tipo de documento
         doc_layout = QHBoxLayout()
         doc_layout.addWidget(QLabel("Tipo:"))
         self.doc_type = QComboBox()
+        self.doc_type.addItems(["RG", "CPF", "CNH", "OUTROS"])
         self.doc_type.currentTextChanged.connect(self.update_templates)
         doc_layout.addWidget(self.doc_type)
         
-        layout.addLayout(doc_layout)
-        layout.addLayout(name_layout)
-        
-        # Adicione esta linha após criar o QComboBox doc_type
+        # Lista de templates
         self.template_list = QListWidget()
         self.template_list.currentItemChanged.connect(self.open_template)
         
@@ -246,11 +255,27 @@ class TemplateEditor(QWidget):
         
         btn_layout.addWidget(new_btn)
         btn_layout.addWidget(save_btn)
-        layout.addLayout(btn_layout)
         
-        group.setLayout(layout)
+        layout.addLayout(name_layout)
+        layout.addLayout(doc_layout)
+        layout.addWidget(self.template_list)
+        
         return group
         
+        
+    
+    def confirm_image(self):
+        """Confirma a imagem selecionada e habilita a edição de ROIs"""
+        if self.current_image is not None:
+            self.enable_roi_editing(True)
+            QMessageBox.information(self, "Sucesso", 
+                                "Imagem confirmada. Você pode começar a adicionar ROIs.")
+        else:
+            QMessageBox.warning(self, "Aviso", 
+                            "Por favor, selecione uma imagem primeiro.")    
+    
+    
+    
     def setup_roi_group(self):
         """Configura o grupo de controles das ROIs"""
         group = QGroupBox("Regiões")
@@ -282,6 +307,38 @@ class TemplateEditor(QWidget):
         
         group.setLayout(layout)
         return group
+
+
+    def load_image(self, file_path):
+        """Carrega uma nova imagem para edição"""
+        try:
+            image = cv2.imread(file_path)
+            if image is None:
+                raise ValueError("Não foi possível carregar a imagem")
+                
+            self.current_image = self.roi_extractor.standardize_image(image)
+            self.image_viewer.load_image(self.current_image)
+            
+            # Desabilitar edição de ROIs até confirmação
+            self.enable_roi_editing(False)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Erro",
+                            f"Erro ao carregar imagem: {str(e)}")
+
+    def init_state(self):
+        """Inicializa o estado do editor"""
+        # Inicializar listas
+        self.fields_list = QListWidget()  # Adicionar esta linha
+        self.roi_list = QListWidget()     # Adicionar esta linha
+        
+        # Desabilitar edição de ROIs inicialmente
+        self.enable_roi_editing(False)
+        
+        # Atualizar templates
+        self.update_templates(self.doc_type.currentText())
+
+
 
     def setup_properties_group(self):
         """Configura o grupo de propriedades da ROI"""
@@ -486,6 +543,15 @@ class TemplateEditor(QWidget):
 
     # Aqui vão todas as funções que implementamos anteriormente
     
+    def enable_roi_editing(self, enabled=True):
+        """Habilita ou desabilita a edição de ROIs"""
+        # Habilitar/desabilitar controles de ROI
+        self.roi_name.setEnabled(enabled)
+        self.roi_type.setEnabled(enabled)
+        self.roi_x.setEnabled(enabled)
+        self.roi_y.setEnabled(enabled)
+        self.roi_w.setEnabled(enabled)
+        self.roi_h.setEnabled(enabled)
         
     def update_roi_from_inputs(self):
         """Atualiza a ROI baseado nos valores dos campos de entrada"""
