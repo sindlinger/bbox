@@ -7,7 +7,7 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QLabel, QComboBox, QLineEdit, QPushButton,
-    QSpinBox, QListWidget, QListWidgetItem, QScrollArea, QMessageBox, QInputDialog
+    QSpinBox, QListWidget, QListWidgetItem, QScrollArea, QMessageBox, QInputDialog, QDialogButtonBox, QGridLayout, QDialog
 )
 
 from PySide6.QtCore import Qt, Signal, QPoint
@@ -33,7 +33,8 @@ class ImageViewer(QLabel):
         self.selected_roi = None
         self.dragging = False
         self.drag_start = None
-        
+        self.template_modified = False
+        self.fields_list = []  # Lista para campos do template
         self.setMouseTracking(True)
         
     def load_image(self, image):
@@ -160,14 +161,21 @@ class TemplateEditor(QWidget):
         super().__init__()
         self.template_modified = False
         self.selected_roi = None
-        self.regions = {}
-        self.current_image = None
+        
+        self.roi_list = QListWidget()  # Lista visual de ROIs
+        self.fields_list = []          # Lista de metadados dos campos
+        self.fields_list_widget = QListWidget()  # Adicionando a definição de fields_list_widget
+        self.regions = {}   
 
         # Inicializar gerenciadores
         self.template_manager = TemplateManager()
         self.roi_extractor = ROIExtractor(self.template_manager)
         
-        self.current_image = None
+        # Conectar sinais
+        self.roi_list.itemClicked.connect(self.select_roi)
+        self.fields_list_widget.itemClicked.connect(self.on_field_selected)
+            
+        
         self.setup_ui()
         
         # Inicializar estado
@@ -218,6 +226,16 @@ class TemplateEditor(QWidget):
         # Adicionar painéis ao layout principal
         layout.addWidget(left_panel)
         layout.addLayout(right_layout, stretch=1)
+        
+        
+        self.fields_list_widget = QListWidget()
+        self.fields_list_widget.itemClicked.connect(self.on_field_selected)
+
+        # Botões para gerenciar campos
+        add_field_btn = QPushButton("Adicionar Campo")
+        remove_field_btn = QPushButton("Remover Campo")
+        add_field_btn.clicked.connect(self.add_field)
+        remove_field_btn.clicked.connect(self.remove_field)
         
         self.setLayout(layout)
         
@@ -326,17 +344,17 @@ class TemplateEditor(QWidget):
             QMessageBox.critical(self, "Erro",
                             f"Erro ao carregar imagem: {str(e)}")
 
-    def init_state(self):
-        """Inicializa o estado do editor"""
-        # Inicializar listas
-        self.fields_list = QListWidget()  # Adicionar esta linha
-        self.roi_list = QListWidget()     # Adicionar esta linha
+    # def init_state(self):
+    #     """Inicializa o estado do editor"""
+    #     # Inicializar listas
+    #     self.fields_list = QListWidget()  # Adicionar esta linha
+    #     self.roi_list = QListWidget()     # Adicionar esta linha
         
-        # Desabilitar edição de ROIs inicialmente
-        self.enable_roi_editing(False)
+    #     # Desabilitar edição de ROIs inicialmente
+    #     self.enable_roi_editing(False)
         
-        # Atualizar templates
-        self.update_templates(self.doc_type.currentText())
+    #     # Atualizar templates
+    #     self.update_templates(self.doc_type.currentText())
 
 
 
@@ -503,18 +521,19 @@ class TemplateEditor(QWidget):
         self.update_templates()
   
     def sync_roi_fields(self):
-        """Sincroniza a lista de campos com as ROIs"""
+        """Sincroniza as duas listas com as regiões atuais"""
         try:
-            # Limpa ambas as listas
-            self.fields_list.clear()
+            # Limpar ambas as listas
             self.roi_list.clear()
+            self.fields_list.clear()
+            self.fields_list_widget.clear()
             
-            # Adiciona os campos/ROIs
+            # Adicionar campos/ROIs baseados nas regiões
             for name, region in self.regions.items():
-                # Adiciona à lista de ROIs
+                # Adicionar à lista de ROIs (visual)
                 self.roi_list.addItem(name)
                 
-                # Cria item para lista de campos
+                # Criar item para lista de campos (metadados)
                 field_item = QListWidgetItem(name)
                 field_data = {
                     'id': name,
@@ -527,8 +546,11 @@ class TemplateEditor(QWidget):
                         'height': region['coords'][3] - region['coords'][1]
                     }
                 }
+                
+                # Adicionar aos campos
                 field_item.setData(Qt.UserRole, field_data)
-                self.fields_list.addItem(field_item)
+                self.fields_list_widget.addItem(field_item)
+                self.fields_list.append(field_data)
                 
         except Exception as e:
             QMessageBox.critical(self, "Erro", 
@@ -653,24 +675,46 @@ class TemplateEditor(QWidget):
     def move_roi(self, roi_id, new_position):
         """Atualiza a posição de uma ROI quando ela é movida na interface"""
         try:
-            current_item = self.fields_list.currentItem()
-            if not current_item:
-                return
+            # Atualizar a região
+            if roi_id in self.regions:
+                region = self.regions[roi_id]
+                old_coords = region["coords"]
+                width = old_coords[2] - old_coords[0]
+                height = old_coords[3] - old_coords[1]
                 
-            field_data = current_item.data(Qt.UserRole)
-            if not field_data:
-                return
+                # Calcular novas coordenadas
+                new_x = int(new_position.x())
+                new_y = int(new_position.y())
+                new_coords = (new_x, new_y, new_x + width, new_y + height)
                 
-            field_data['bbox']['x'] = new_position[0]
-            field_data['bbox']['y'] = new_position[1]
-            
-            current_item.setData(Qt.UserRole, field_data)
-            self.update_coordinate_inputs(field_data['bbox'])
-            self.template_modified = True
-            
+                # Atualizar região
+                region["coords"] = new_coords
+                
+                # Atualizar campos
+                self.update_field_coordinates(roi_id, new_coords)
+                
+                # Atualizar interface
+                self.update_roi_display()
+                self.template_modified = True
+                
         except Exception as e:
             QMessageBox.critical(self, "Erro", 
                             f"Erro ao mover ROI: {str(e)}")
+
+    def update_field_coordinates(self, roi_id, coords):
+        """Atualiza as coordenadas nos campos"""
+        for i in range(self.fields_list_widget.count()):
+            item = self.fields_list_widget.item(i)
+            field_data = item.data(Qt.UserRole)
+            if field_data['id'] == roi_id:
+                field_data['bbox'] = {
+                    'x': coords[0],
+                    'y': coords[1],
+                    'width': coords[2] - coords[0],
+                    'height': coords[3] - coords[1]
+                }
+                item.setData(Qt.UserRole, field_data)
+                break
         
     def new_template(self):
         """Cria um novo template"""
@@ -981,3 +1025,92 @@ class TemplateEditor(QWidget):
                 "Erro",
                 f"Erro ao carregar imagem: {str(e)}"
             )
+            
+    def add_field(self):
+        """Adiciona um novo campo ao template"""
+        dialog = FieldDialog(self)
+        if dialog.exec_():
+            field_data = dialog.get_field_data()
+            self.fields_list.append(field_data)
+            self.fields_list_widget.addItem(field_data['name'])
+            self.update_template()
+
+    def remove_field(self):
+        """Remove o campo selecionado"""
+        current_item = self.fields_list_widget.currentItem()
+        if current_item:
+            row = self.fields_list_widget.row(current_item)
+            self.fields_list_widget.takeItem(row)
+            self.fields_list.pop(row)
+            self.update_template()
+
+    def on_field_selected(self, item):
+        """Manipula a seleção de um campo"""
+        row = self.fields_list_widget.row(item)
+        field_data = self.fields_list[row]
+        # Atualizar interface com dados do campo selecionado
+
+    def update_template(self):
+        """Atualiza o template com os campos atuais"""
+        if hasattr(self, 'current_template') and self.current_template:
+            self.current_template['fields'] = self.fields_list
+            self.template_modified = True
+    
+    
+class FieldDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout()
+        
+        # Campo Nome
+        self.name_edit = QLineEdit()
+        layout.addWidget(QLabel("Nome do Campo:"))
+        layout.addWidget(self.name_edit)
+
+        # Tipo de Campo
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(['text', 'number', 'date', 'cpf', 'currency'])
+        layout.addWidget(QLabel("Tipo:"))
+        layout.addWidget(self.type_combo)
+
+        # Coordenadas
+        coord_layout = QGridLayout()
+        self.x_spin = QSpinBox()
+        self.y_spin = QSpinBox()
+        self.width_spin = QSpinBox()
+        self.height_spin = QSpinBox()
+        coord_layout.addWidget(QLabel("X:"), 0, 0)
+        coord_layout.addWidget(self.x_spin, 0, 1)
+        coord_layout.addWidget(QLabel("Y:"), 1, 0)
+        coord_layout.addWidget(self.y_spin, 1, 1)
+        coord_layout.addWidget(QLabel("Largura:"), 2, 0)
+        coord_layout.addWidget(self.width_spin, 2, 1)
+        coord_layout.addWidget(QLabel("Altura:"), 3, 0)
+        coord_layout.addWidget(self.height_spin, 3, 1)
+        layout.addLayout(coord_layout)
+
+        # Botões
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.setLayout(layout)
+
+    def get_field_data(self):
+        """Retorna os dados do campo"""
+        return {
+            'name': self.name_edit.text(),
+            'type': self.type_combo.currentText(),
+            'coords': (
+                self.x_spin.value(),
+                self.y_spin.value(),
+                self.width_spin.value(),
+                self.height_spin.value()
+            )
+        }

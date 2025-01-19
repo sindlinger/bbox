@@ -194,3 +194,29 @@ class TemplateManager:
                     errors.append(f"Região {name} não tem tipo definido")
                     
         return len(errors) == 0, errors
+
+
+class Template:
+    def __init__(self, name, doc_type):
+        self.name = name
+        self.doc_type = doc_type
+        self.fields = []  # Lista de campos
+        self.created_at = datetime.now()
+        self.modified_at = datetime.now()
+
+    def add_field(self, field_data):
+        self.fields.append(field_data)
+        self.modified_at = datetime.now()
+
+    def remove_field(self, field_name):
+        self.fields = [f for f in self.fields if f['name'] != field_name]
+        self.modified_at = datetime.now()
+
+    def to_dict(self):
+        return {
+            'name': self.name,
+            'doc_type': self.doc_type,
+            'fields': self.fields,
+            'created_at': self.created_at.isoformat(),
+            'modified_at': self.modified_at.isoformat()
+        }
